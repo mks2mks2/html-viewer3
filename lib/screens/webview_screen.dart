@@ -24,31 +24,34 @@ class _WebViewScreenState extends State<WebViewScreen> {
   void initState() {
     super.initState();
     _currentUrl = widget.url;
-    _initWebView();
-  }
-
-  void _initWebView() {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(AppTheme.background)
       ..setNavigationDelegate(
         NavigationDelegate(
-          onPageStarted: (url) => setState(() {
-            _isLoading = true;
-            _hasError = false;
-            _currentUrl = url;
-          }),
-          onProgress: (progress) =>
-              setState(() => _loadingProgress = progress / 100),
-          onPageFinished: (url) => setState(() {
-            _isLoading = false;
-            _currentUrl = url;
-          }),
-          onWebResourceError: (error) => setState(() {
-            _isLoading = false;
-            _hasError = true;
-            _errorMessage = 'Erro ao carregar a página.\n${error.description}';
-          }),
+          onPageStarted: (url) {
+            setState(() {
+              _isLoading = true;
+              _hasError = false;
+              _currentUrl = url;
+            });
+          },
+          onProgress: (progress) {
+            setState(() => _loadingProgress = progress / 100);
+          },
+          onPageFinished: (url) {
+            setState(() {
+              _isLoading = false;
+              _currentUrl = url;
+            });
+          },
+          onWebResourceError: (error) {
+            setState(() {
+              _isLoading = false;
+              _hasError = true;
+              _errorMessage = 'Erro ao carregar a pagina.\n${error.description}';
+            });
+          },
           onNavigationRequest: (_) => NavigationDecision.navigate,
         ),
       )
@@ -67,58 +70,113 @@ class _WebViewScreenState extends State<WebViewScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: _buildAppBar(),
-      body: Stack(
-        children: [
-          if (_hasError) _buildErrorView() else WebViewWidget(controller: _controller),
+      appBar: AppBar(
+        backgroundColor: AppTheme.surface,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () async {
+            if (await _controller.canGoBack()) {
+              _controller.goBack();
+            } else {
+              if (mounted) Navigator.pop(context);
+            }
+          },
+        ),
+        title: Row(
+          children: [
+            Icon(
+              UrlService.isLocal(_currentUrl) ? Icons.router_rounded : Icons.lock_rounded,
+              color: UrlService.isLocal(_currentUrl)
+                  ? AppTheme.accentSecondary
+                  : AppTheme.accent,
+              size: 14,
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                _displayUrl,
+                style: GoogleFonts.spaceMono(
+                    color: AppTheme.textPrimary, fontSize: 12),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded, size: 20),
+            onPressed: () => _controller.reload(),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close_rounded, size: 20),
+            onPressed: () => Navigator.pop(context),
+          ),
         ],
+        bottom: _isLoading
+            ? PreferredSize(
+                preferredSize: const Size.fromHeight(2),
+                child: LinearProgressIndicator(
+                  value: _loadingProgress,
+                  backgroundColor: AppTheme.border,
+                  valueColor:
+                      const AlwaysStoppedAnimation<Color>(AppTheme.accent),
+                ),
+              )
+            : null,
       ),
+      body: _hasError
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: AppTheme.error.withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.wifi_off_rounded,
+                          color: AppTheme.error, size: 48),
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      'Nao foi possivel carregar',
+                      style: GoogleFonts.spaceGrotesk(
+                        color: AppTheme.textPrimary,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _errorMessage,
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.spaceGrotesk(
+                          color: AppTheme.textSecondary, fontSize: 13),
+                    ),
+                    const SizedBox(height: 32),
+                    ElevatedButton.icon(
+                      onPressed: () => _controller.reload(),
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: Text('Tentar novamente',
+                          style: GoogleFonts.spaceGrotesk(
+                              fontWeight: FontWeight.w600)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.accent,
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 24, vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : WebViewWidget(controller: _controller),
     );
   }
-
-  PreferredSizeWidget _buildAppBar() {
-    final isLocal = UrlService.isLocal(_currentUrl);
-    return AppBar(
-      backgroundColor: AppTheme.surface,
-      leading: IconButton(
-        icon: const Icon(Icons.arrow_back_rounded),
-        onPressed: () async {
-          if (await _controller.canGoBack()) {
-            _controller.goBack();
-          } else {
-            if (mounted) Navigator.pop(context);
-          }
-        },
-      ),
-      title: Row(
-        children: [
-          Icon(
-            isLocal ? Icons.router_rounded : Icons.lock_rounded,
-            color: isLocal ? AppTheme.accentSecondary : AppTheme.accent,
-            size: 14,
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              _displayUrl,
-              style: GoogleFonts.spaceMono(
-                color: AppTheme.textPrimary, fontSize: 12, letterSpacing: 0.5),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
-      ),
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.refresh_rounded, size: 20),
-          onPressed: () => _controller.reload(),
-        ),
-        PopupMenuButton<String>(
-          icon: const Icon(Icons.more_vert_rounded, size: 20),
-          color: AppTheme.card,
-          onSelected: (value) async {
-            switch (value) {
-              case 'forward':
-                if (await _controller.canGoForward()) _controller.goForward();
-                break;
-              case 'home':
+}
