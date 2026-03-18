@@ -7,16 +7,3 @@
         <item name="android:windowBackground">?android:colorBackground</item>
     </style>
 </resources>
-```
-
-**Commit changes** ✅
-
----
-
-**Arquivo 2 — styles.xml noturno**
-
-Ainda em `res` → **"Add file"** → **"Create new file"**
-
-Nome:
-```
-values-night/styles.xml
