@@ -5,6 +5,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_theme.dart';
 import '../services/connectivity_service.dart';
+import '../services/local_server.dart';
 import '../screens/password_screen.dart';
 
 class WebViewScreen extends StatefulWidget {
@@ -33,47 +34,54 @@ class _WebViewScreenState extends State<WebViewScreen> {
   }
 
   Future<void> _initWebView() async {
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..enableZoom(false)
-      ..setMediaPlaybackRequiresUserGesture(false)
-      ..setBackgroundColor(AppTheme.background)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageStarted: (_) => setState(() {
-            _isLoading = true;
-            _hasError = false;
-          }),
-          onProgress: (p) => setState(() => _loadingProgress = p / 100),
-          onPageFinished: (_) => setState(() => _isLoading = false),
-          onWebResourceError: (error) {
-            // Ignorar erros de sub-recursos (imagens, etc.) que não sejam da página principal
-            if (error.isForMainFrame ?? true) {
-              setState(() {
-                _isLoading = false;
-                _hasError = true;
-                _errorMessage = 'Erro ao carregar a página.\n${error.description}';
-              });
-            }
-          },
-          onNavigationRequest: (request) {
-            // Permitir navegação entre arquivos locais
-            return NavigationDecision.navigate;
-          },
-        ),
-      );
+    setState(() {
+      _isLoading = true;
+      _hasError = false;
+    });
 
-    // Ler o HTML e carregar com baseUrl apontando para a pasta local
     try {
-      final file = File(widget.localPath);
-      final html = await file.readAsString();
-      final baseUrl = 'file://${file.parent.path}/';
-      await _controller.loadHtmlString(html, baseUrl: baseUrl);
+      // Pasta onde os arquivos foram salvos
+      final contentDir = File(widget.localPath).parent.path;
+
+      // Iniciar servidor local servindo essa pasta
+      final baseUrl = await LocalServer.start(contentDir);
+
+      // Nome do arquivo principal
+      final fileName = widget.localPath.split('/').last;
+      final url = '$baseUrl$fileName';
+
+      _controller = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..setMediaPlaybackRequiresUserGesture(false)
+        ..enableZoom(false)
+        ..setBackgroundColor(AppTheme.background)
+        ..setNavigationDelegate(
+          NavigationDelegate(
+            onPageStarted: (_) => setState(() {
+              _isLoading = true;
+              _hasError = false;
+            }),
+            onProgress: (p) => setState(() => _loadingProgress = p / 100),
+            onPageFinished: (_) => setState(() => _isLoading = false),
+            onWebResourceError: (error) {
+              if (error.isForMainFrame ?? true) {
+                setState(() {
+                  _isLoading = false;
+                  _hasError = true;
+                  _errorMessage =
+                      'Erro ao carregar a página.\n${error.description}';
+                });
+              }
+            },
+            onNavigationRequest: (_) => NavigationDecision.navigate,
+          ),
+        )
+        ..loadRequest(Uri.parse(url));
     } catch (e) {
       setState(() {
         _isLoading = false;
         _hasError = true;
-        _errorMessage = 'Erro ao ler o arquivo local.\n$e';
+        _errorMessage = 'Erro ao iniciar servidor local.\n$e';
       });
     }
   }
@@ -114,11 +122,13 @@ class _WebViewScreenState extends State<WebViewScreen> {
   void dispose() {
     _connectivitySub?.cancel();
     ConnectivityService.stopMonitoring();
+    LocalServer.stop();
     super.dispose();
   }
 
   void _goToSync() {
     ConnectivityService.stopMonitoring();
+    LocalServer.stop();
     Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
