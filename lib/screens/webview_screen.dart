@@ -2,10 +2,10 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_theme.dart';
 import '../services/connectivity_service.dart';
+import '../services/local_server.dart';
 import '../screens/password_screen.dart';
 
 class WebViewScreen extends StatefulWidget {
@@ -22,6 +22,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
   bool _hasError = false;
   String _errorMessage = '';
   double _loadingProgress = 0;
+  bool _serverReady = false;
 
   StreamSubscription<bool>? _connectivitySub;
   bool _showingPasswordScreen = false;
@@ -29,54 +30,58 @@ class _WebViewScreenState extends State<WebViewScreen> {
   @override
   void initState() {
     super.initState();
-    _initWebView();
+    _startServerAndLoad();
     _startConnectivityMonitor();
   }
 
-  void _initWebView() {
+  Future<void> _startServerAndLoad() async {
     setState(() {
       _isLoading = true;
       _hasError = false;
     });
 
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setMediaPlaybackRequiresUserGesture(false)
-      ..enableZoom(false)
-      ..setBackgroundColor(AppTheme.background)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageStarted: (_) => setState(() {
-            _isLoading = true;
-            _hasError = false;
-          }),
-          onProgress: (p) => setState(() => _loadingProgress = p / 100),
-          onPageFinished: (_) => setState(() => _isLoading = false),
-          onWebResourceError: (error) {
-            if (error.isForMainFrame ?? true) {
-              setState(() {
-                _isLoading = false;
-                _hasError = true;
-                _errorMessage =
-                    'Erro ao carregar a página.\n${error.description}';
-              });
-            }
-          },
-          onNavigationRequest: (_) => NavigationDecision.navigate,
-        ),
-      );
+    try {
+      final contentDir = File(widget.localPath).parent.path;
+      final baseUrl = await LocalServer.start(contentDir);
+      final fileName = widget.localPath.split('/').last;
+      final url = '$baseUrl$fileName';
 
-    // Habilitar acesso a arquivos locais no Android
-    if (_controller.platform is AndroidWebViewController) {
-      final androidController =
-          _controller.platform as AndroidWebViewController;
-      androidController.setAllowFileAccess(true);
-      androidController.setGeolocationEnabled(false);
+      _controller = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..setMediaPlaybackRequiresUserGesture(false)
+        ..enableZoom(false)
+        ..setBackgroundColor(AppTheme.background)
+        ..setNavigationDelegate(
+          NavigationDelegate(
+            onPageStarted: (_) => setState(() {
+              _isLoading = true;
+              _hasError = false;
+            }),
+            onProgress: (p) => setState(() => _loadingProgress = p / 100),
+            onPageFinished: (_) => setState(() => _isLoading = false),
+            onWebResourceError: (error) {
+              if (error.isForMainFrame ?? true) {
+                setState(() {
+                  _isLoading = false;
+                  _hasError = true;
+                  _errorMessage =
+                      'Erro ao carregar.\n${error.description}';
+                });
+              }
+            },
+            onNavigationRequest: (_) => NavigationDecision.navigate,
+          ),
+        )
+        ..loadRequest(Uri.parse(url));
+
+      setState(() => _serverReady = true);
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+        _hasError = true;
+        _errorMessage = 'Erro ao iniciar servidor local.\n$e';
+      });
     }
-
-    // Carregar arquivo local
-    final uri = Uri.file(widget.localPath);
-    _controller.loadRequest(uri);
   }
 
   void _startConnectivityMonitor() {
@@ -115,11 +120,13 @@ class _WebViewScreenState extends State<WebViewScreen> {
   void dispose() {
     _connectivitySub?.cancel();
     ConnectivityService.stopMonitoring();
+    LocalServer.stop();
     super.dispose();
   }
 
   void _goToSync() {
     ConnectivityService.stopMonitoring();
+    LocalServer.stop();
     Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
@@ -131,7 +138,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
           onPressed: () async {
-            if (await _controller.canGoBack()) {
+            if (_serverReady && await _controller.canGoBack()) {
               _controller.goBack();
             }
           },
@@ -154,7 +161,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh_rounded, size: 20),
-            onPressed: () => _initWebView(),
+            onPressed: () => _startServerAndLoad(),
             tooltip: 'Recarregar',
           ),
           IconButton(
@@ -175,7 +182,13 @@ class _WebViewScreenState extends State<WebViewScreen> {
               )
             : null,
       ),
-      body: _hasError ? _buildError() : WebViewWidget(controller: _controller),
+      body: _hasError
+          ? _buildError()
+          : _serverReady
+              ? WebViewWidget(controller: _controller)
+              : const Center(
+                  child: CircularProgressIndicator(color: AppTheme.accent),
+                ),
     );
   }
 
@@ -213,7 +226,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
             ),
             const SizedBox(height: 32),
             ElevatedButton.icon(
-              onPressed: () => _initWebView(),
+              onPressed: () => _startServerAndLoad(),
               icon: const Icon(Icons.refresh_rounded),
               label: Text('Tentar novamente',
                   style: GoogleFonts.spaceGrotesk(
