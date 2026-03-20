@@ -16,7 +16,8 @@ class WebViewScreen extends StatefulWidget {
   State<WebViewScreen> createState() => _WebViewScreenState();
 }
 
-class _WebViewScreenState extends State<WebViewScreen> {
+class _WebViewScreenState extends State<WebViewScreen>
+    with WidgetsBindingObserver {
   late final WebViewController _controller;
   bool _isLoading = true;
   bool _hasError = false;
@@ -26,18 +27,37 @@ class _WebViewScreenState extends State<WebViewScreen> {
 
   StreamSubscription<bool>? _connectivitySub;
   bool _showingPasswordScreen = false;
+  bool _wasInBackground = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _startServerAndLoad();
     _startConnectivityMonitor();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      // App foi para segundo plano
+      _wasInBackground = true;
+    } else if (state == AppLifecycleState.resumed && _wasInBackground) {
+      // App voltou do segundo plano
+      _wasInBackground = false;
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted && !_showingPasswordScreen) {
+          _showPasswordOverlay();
+        }
+      });
+    }
   }
 
   Future<void> _startServerAndLoad() async {
     setState(() {
       _isLoading = true;
       _hasError = false;
+      _serverReady = false;
     });
 
     try {
@@ -74,27 +94,29 @@ class _WebViewScreenState extends State<WebViewScreen> {
         )
         ..loadRequest(Uri.parse(url));
 
-      setState(() => _serverReady = true);
+      if (mounted) setState(() => _serverReady = true);
     } catch (e) {
-      setState(() {
-        _isLoading = false;
-        _hasError = true;
-        _errorMessage = 'Erro ao iniciar servidor local.\n$e';
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _hasError = true;
+          _errorMessage = 'Erro ao iniciar servidor local.\n$e';
+        });
+      }
     }
   }
 
   void _startConnectivityMonitor() {
     final stream = ConnectivityService.startMonitoring();
     _connectivitySub = stream.listen((connected) {
-      if (connected && !_showingPasswordScreen && mounted) {
+      if (connected && !_showingPasswordScreen && mounted && !_wasInBackground) {
         _showPasswordOverlay();
       }
     });
   }
 
   void _showPasswordOverlay() {
-    if (_showingPasswordScreen) return;
+    if (_showingPasswordScreen || !mounted) return;
     setState(() => _showingPasswordScreen = true);
 
     Navigator.push(
@@ -104,7 +126,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
           internetReconnected: true,
           onSuccess: (passwordContext) {
             Navigator.pop(passwordContext);
-            setState(() => _showingPasswordScreen = false);
+            if (mounted) setState(() => _showingPasswordScreen = false);
           },
         ),
       ),
@@ -118,6 +140,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _connectivitySub?.cancel();
     ConnectivityService.stopMonitoring();
     LocalServer.stop();
